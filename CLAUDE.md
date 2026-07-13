@@ -115,7 +115,7 @@ Parse for `class="rowstatussuccess"` → success; otherwise extract the `rowstat
 
 ## Open items
 
-1. Confirm with e2open support whether scripted submission is permitted under contract — before any unattended/production use.
+1. ~~Confirm with e2open support whether scripted submission is permitted under contract~~ — **CONFIRMED ALLOWED (2026-07-13).** Scripted submission is permitted under the carrier contract.
 2. Build the pipeline: SES intake inbox (separate from the original alert inbox) → Lambda → parser (TMS ID + rate extraction, sender allowlist) → e2open client (login → scrape → submit) → confirmation email back.
 3. Credentials in AWS Secrets Manager, never plaintext/env vars. (Note: the original e2open password was exposed during discovery/debugging and should already have been rotated — use the new one only via Secrets Manager going forward.)
 4. Session lifetime not yet measured — determines whether Lambda re-authenticates per bid or holds a session across a shift.

@@ -1,0 +1,24 @@
+From: Vardan Vardanyan <vardan@ccsexpedited.com>
+To: intake@bids.carolinascourier.com
+Subject: Fwd: Spot Market Load TMS ID 208803999 Available: CITY A, ST to CITY B, ST
+MIME-Version: 1.0
+Content-Type: text/plain; charset="UTF-8"
+
+100000
+
+---------- Forwarded message ---------
+From: <noreply@tms.blujaysolutions.net>
+Subject: Spot Market Load TMS ID 208803999 Available: CITY A, ST to CITY B, ST
+To: <vardan@ccsexpedited.com>
+
+This is a SANITIZED, SYNTHETIC fixture for tests — no real load, shipper, or
+third-party data. It preserves only what the parser tests assert on:
+a bare-number rate on the first line and a "TMS ID <number>" reference.
+
+Spot Market Load Alert: new posting found.
+Bid and tender acceptance must be completed within 30 minutes from the time
+the load is placed on the spot market.
+
+Origin:      CITY A, ST (07/14/2026)
+Destination: CITY B, ST (07/17/2026)
+Equipment:   53 DRY VAN

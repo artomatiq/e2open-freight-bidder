@@ -16,6 +16,9 @@ lint = true
 capabilities = "CAPABILITY_IAM"
 confirm_changeset = true
 resolve_s3 = true
+region = "us-east-1"
+# LIVE: a confirmed 'yes' reply places a REAL bid. Set to DryRun=true to disarm.
+parameter_overrides = "DryRun=false"
 
 [default.package.parameters]
 resolve_s3 = true

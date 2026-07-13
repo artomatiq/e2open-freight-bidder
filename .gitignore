@@ -153,6 +153,10 @@ htmlcov/
 .cache
 .pytest_cache/
 nosetests.xml
+
+# AWS SAM build artifacts
+.aws-sam/
+samconfig.local.toml
 coverage.xml
 *.cover
 .hypothesis/

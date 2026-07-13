@@ -3,43 +3,193 @@ Transform: AWS::Serverless-2016-10-31
 Description: >
   e2open-freight-bidder
 
-  Sample SAM Template for e2open-freight-bidder
+  Email intake pipeline: SES receives a forwarded bid-request email at
+  intake@bids.carolinascourier.com, stores it in S3, which triggers a Lambda
+  that parses the rate + TMS load ID, logs into e2open, submits the bid, and
+  emails the result back to the sender.
 
-# More info about Globals: https://github.com/awslabs/serverless-application-model/blob/master/docs/globals.rst
-Globals:
-  Function:
-    Timeout: 3
+Parameters:
+  IntakeRecipient:
+    Type: String
+    Default: intake@bids.carolinascourier.com
+    Description: The address SES matches incoming mail against.
+  Allowlist:
+    Type: String
+    Default: vardan@ccsexpedited.com
+    Description: Comma-separated sender addresses allowed to trigger a bid.
+  MailFrom:
+    Type: String
+    Default: bidder@bids.carolinascourier.com
+    Description: SES sender for confirmation emails (must be on the verified domain).
+  DryRun:
+    Type: String
+    Default: "true"
+    AllowedValues: ["true", "false"]
+    Description: >
+      When "true" the bidder scrapes and builds the payload but does NOT submit.
+      Flip to "false" to place real bids.
 
-    # You can add LoggingConfig parameters such as the Logformat, Log Group, and SystemLogLevel or ApplicationLogLevel. Learn more here https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/sam-resource-function.html#sam-function-loggingconfig.
-    LoggingConfig:
-      LogFormat: JSON
 Resources:
-  HelloWorldFunction:
-    Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
+  # Holds the e2open portal login (userID + password) as a JSON secret.
+  # Created EMPTY on purpose — the real value is never in this template (which
+  # lives in git). Populate it after deploy with `put-secret-value`.
+  E2openCredentials:
+    Type: AWS::SecretsManager::Secret
     Properties:
-      CodeUri: hello_world/
-      Handler: app.lambda_handler
-      Runtime: python3.14
-      Architectures:
-      - x86_64
-      Events:
-        HelloWorld:
-          Type: Api # More info about API Event Source: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#api
-          Properties:
-            Path: /hello
-            Method: get
+      Name: e2open/credentials
+      Description: e2open TMS portal login for the freight bidder (userID + password JSON)
+
+  # The bidder. Reads the stored email, parses it, and drives the e2open flow.
+  # NOTE: its S3-read policy uses a literal bucket ARN (not !Ref EmailBucket) so
+  # the function does NOT depend on the bucket — that lets the bucket depend on
+  # the function (for the trigger) without a circular reference.
+  BidderFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ./
+      Handler: bidder.app.lambda_handler
+      Runtime: python3.13
+      Timeout: 60
+      MemorySize: 256
+      Environment:
+        Variables:
+          ALLOWLIST: !Ref Allowlist
+          SECRET_ID: e2open/credentials
+          MAIL_FROM: !Ref MailFrom
+          REPLY_TO: !Ref IntakeRecipient    # 'yes' replies route back into the intake pipeline
+          DRY_RUN: !Ref DryRun
+          OFFER_TTL_HOURS: "24"
+          TZ: America/New_York          # so offer expiry is computed in Eastern time
+      Policies:
+        - Statement:
+            - Sid: ReadE2openSecret
+              Effect: Allow
+              Action: secretsmanager:GetSecretValue
+              Resource: !Ref E2openCredentials
+            - Sid: ReadIncomingEmails
+              Effect: Allow
+              Action: s3:GetObject
+              Resource: !Sub "arn:aws:s3:::e2open-freight-bids-intake-${AWS::AccountId}/*"
+            - Sid: SendConfirmationEmail
+              Effect: Allow
+              Action:
+                - ses:SendEmail
+                - ses:SendRawEmail
+              Resource: "*"
+
+  # Allows S3 to invoke the bidder. Depends only on the function; the bucket's
+  # notification (below) DependsOn this so the permission exists first.
+  LambdaInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref BidderFunction
+      Action: lambda:InvokeFunction
+      Principal: s3.amazonaws.com
+      SourceAccount: !Ref AWS::AccountId
+      SourceArn: !Sub "arn:aws:s3:::e2open-freight-bids-intake-${AWS::AccountId}"
+
+  # Raw incoming emails land here. SES writes the full MIME message as an object;
+  # ObjectCreated under incoming/ triggers the bidder.
+  EmailBucket:
+    Type: AWS::S3::Bucket
+    DependsOn: LambdaInvokePermission
+    Properties:
+      BucketName: !Sub "e2open-freight-bids-intake-${AWS::AccountId}"
+      NotificationConfiguration:
+        LambdaConfigurations:
+          - Event: s3:ObjectCreated:*
+            Function: !GetAtt BidderFunction.Arn
+            Filter:
+              S3Key:
+                Rules:
+                  - Name: prefix
+                    Value: incoming/
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      LifecycleConfiguration:
+        Rules:
+          # Bid-request emails are transient; don't accumulate forever.
+          - Id: expire-old-emails
+            Status: Enabled
+            ExpirationInDays: 90
+
+  # Lets the SES service write received mail into the bucket. Constrained to
+  # this account and this rule set. The SourceArn is written as a literal
+  # string (not a !Ref) so there's no circular dependency with the rule below.
+  EmailBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref EmailBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AllowSESPuts
+            Effect: Allow
+            Principal:
+              Service: ses.amazonaws.com
+            Action: s3:PutObject
+            Resource: !Sub "arn:aws:s3:::${EmailBucket}/*"
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+              ArnLike:
+                aws:SourceArn: !Sub "arn:aws:ses:${AWS::Region}:${AWS::AccountId}:receipt-rule-set/bids-ruleset:receipt-rule/*"
+          # Reject any non-HTTPS access to the bucket.
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: "*"
+            Action: s3:*
+            Resource:
+              - !Sub "arn:aws:s3:::${EmailBucket}"
+              - !Sub "arn:aws:s3:::${EmailBucket}/*"
+            Condition:
+              Bool:
+                aws:SecureTransport: false
+
+  # The container for receipt rules. NOTE: creating this does NOT make it the
+  # active rule set — SES only runs the ONE active set. Activation is not a
+  # CloudFormation property; see the post-deploy command in the README/outputs.
+  EmailRuleSet:
+    Type: AWS::SES::ReceiptRuleSet
+    Properties:
+      RuleSetName: bids-ruleset
+
+  # "For mail to the intake address, store it in the bucket."
+  EmailRule:
+    Type: AWS::SES::ReceiptRule
+    # Bucket policy must exist first, or SES rejects the S3 action for lack of
+    # write permission at creation time.
+    DependsOn: EmailBucketPolicy
+    Properties:
+      RuleSetName: !Ref EmailRuleSet
+      Rule:
+        Name: bids-intake
+        Enabled: true
+        ScanEnabled: true          # spam/virus verdicts attached to metadata
+        TlsPolicy: Optional         # don't reject non-TLS senders
+        Recipients:
+          - !Ref IntakeRecipient
+        Actions:
+          - S3Action:
+              BucketName: !Ref EmailBucket
+              ObjectKeyPrefix: incoming/
 
 Outputs:
-  # ServerlessRestApi is an implicit API created out of Events key under Serverless::Function
-  # Find out more about other implicit resources you can reference within SAM
-  # https://github.com/awslabs/serverless-application-model/blob/master/docs/internals/generated_resources.rst#api
-  HelloWorldApi:
-    Description: API Gateway endpoint URL for Prod stage for Hello World 
-      function
-    Value: !Sub "https://${ServerlessRestApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}/Prod/hello/"
-  HelloWorldFunction:
-    Description: Hello World Lambda Function ARN
-    Value: !GetAtt HelloWorldFunction.Arn
-  HelloWorldFunctionIamRole:
-    Description: Implicit IAM Role created for Hello World function
-    Value: !GetAtt HelloWorldFunctionRole.Arn
+  EmailBucketName:
+    Description: S3 bucket where received emails are stored
+    Value: !Ref EmailBucket
+  BidderFunctionName:
+    Description: The bidder Lambda function name
+    Value: !Ref BidderFunction
+  ActivateRuleSetCommand:
+    Description: >
+      Run this ONCE after deploy to make the rule set active (CloudFormation
+      cannot do this itself). Without it, SES ignores the rule.
+    Value: !Sub "aws ses set-active-receipt-rule-set --rule-set-name bids-ruleset --region ${AWS::Region}"
