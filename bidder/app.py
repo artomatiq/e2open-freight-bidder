@@ -28,7 +28,14 @@ from datetime import datetime, timedelta
 import boto3
 
 from bidder.e2open import E2openClient, E2openError
-from bidder.parser import ParseError, message_body, parse_bid_email, sender_address
+from bidder.parser import (
+    MissingRateError,
+    ParseError,
+    message_body,
+    parse_bid_email,
+    parse_rate_reply,
+    sender_address,
+)
 
 log = logging.getLogger()
 log.setLevel(logging.INFO)
@@ -48,6 +55,11 @@ OFFER_TTL_HOURS = int(os.environ.get("OFFER_TTL_HOURS", "24"))
 # Embedded in the confirmation email; survives '>' quoting on reply. Kept on one
 # line so quote-wrapping doesn't split it.
 BID_TOKEN_RE = re.compile(r"LOAD=(\d+)\s+RATE=([0-9]+(?:\.[0-9]+)?)")
+
+# Embedded in the "need the rate" prompt (no RATE= yet). Deliberately requires
+# the ']' to follow the digits immediately so it never matches a full
+# LOAD=...RATE=... token above.
+LOAD_ONLY_TOKEN_RE = re.compile(r"\[bid LOAD=(\d+)\]")
 
 
 def lambda_handler(event, context):
@@ -77,6 +89,8 @@ def _process(bucket: str, key: str) -> None:
     elif first_word in ("no", "n", "cancel"):
         log.info("Cancellation reply from %s", sender)
         _reply(sender, "Freight bid cancelled", "Understood — nothing was submitted.")
+    elif LOAD_ONLY_TOKEN_RE.search(body):
+        _handle_rate_reply(sender, body)
     else:
         _handle_forward(sender, raw)
 
@@ -86,6 +100,17 @@ def _process(bucket: str, key: str) -> None:
 def _handle_forward(sender: str, raw: bytes) -> None:
     try:
         req = parse_bid_email(raw, ALLOWLIST)
+    except MissingRateError as e:
+        log.warning("Recognized load %s but rate missing/invalid: %s", e.load_id, e)
+        _reply(sender, f"Freight bid — need the rate for TMS ID {e.load_id}",
+               f"Got your forward for TMS ID {e.load_id}, but couldn't find a valid bid "
+               f"amount:\n\n{e}\n\n"
+               f"Reply to this email with just the rate on the first line "
+               f"(e.g. '100000') and I'll pick up from there.\n\n"
+               f"(Do not edit the line below — it identifies the load.)\n"
+               f"[bid LOAD={e.load_id}]\n",
+               reply_to=REPLY_TO)
+        return
     except ParseError as e:
         log.warning("Parse failed: %s", e)
         _reply(sender, "Freight bid FAILED — could not read your request",
@@ -93,14 +118,37 @@ def _handle_forward(sender: str, raw: bytes) -> None:
         return
 
     log.info("Confirmation requested: load=%s rate=%.2f sender=%s", req.load_id, req.rate, sender)
+    _ask_confirmation(sender, req.load_id, req.rate)
+
+
+# --- step 1b: a reply supplying the previously-missing rate ----------------
+
+def _handle_rate_reply(sender: str, body: str) -> None:
+    load_id = LOAD_ONLY_TOKEN_RE.search(body).group(1)
+    try:
+        rate = parse_rate_reply(body)
+    except ParseError as e:
+        log.warning("Rate reply from %s for load %s still invalid: %s", sender, load_id, e)
+        _reply(sender, f"Freight bid — still need a valid rate for TMS ID {load_id}",
+               f"{e}\n\nReply with just the rate on the first line (e.g. '100000').\n\n"
+               f"(Do not edit the line below — it identifies the load.)\n"
+               f"[bid LOAD={load_id}]\n",
+               reply_to=REPLY_TO)
+        return
+
+    log.info("Rate supplied via reply: load=%s rate=%.2f sender=%s", load_id, rate, sender)
+    _ask_confirmation(sender, load_id, rate)
+
+
+def _ask_confirmation(sender: str, load_id: str, rate: float) -> None:
     body = (
-        f"Reply 'yes' to submit ${req.rate:,.2f} for TMS ID {req.load_id}.\n"
+        f"Reply 'yes' to submit ${rate:,.2f} for TMS ID {load_id}.\n"
         f"Reply 'no' to cancel.\n\n"
         f"(Do not edit the line below — it identifies the bid.)\n"
-        f"[bid LOAD={req.load_id} RATE={req.rate:.2f}]\n"
+        f"[bid LOAD={load_id} RATE={rate:.2f}]\n"
     )
     _reply(sender,
-           f"Confirm bid: ${req.rate:,.2f} for TMS ID {req.load_id} — reply YES",
+           f"Confirm bid: ${rate:,.2f} for TMS ID {load_id} — reply YES",
            body, reply_to=REPLY_TO)
 
 

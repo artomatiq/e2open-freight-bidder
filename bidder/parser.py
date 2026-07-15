@@ -42,6 +42,17 @@ class ParseError(Exception):
     """The email could not be turned into a valid, safe bid instruction."""
 
 
+class MissingRateError(ParseError):
+    """A recognized e2open alert forward (valid sender, valid TMS ID) is
+    missing a usable bid rate. Distinct from ParseError so the handler can
+    reply asking specifically for the amount instead of bouncing the whole
+    email as unreadable."""
+
+    def __init__(self, message: str, load_id: str):
+        super().__init__(message)
+        self.load_id = load_id
+
+
 @dataclass(frozen=True)
 class BidRequest:
     sender: str          # normalized (lowercased) sender address
@@ -88,8 +99,34 @@ def _first_nonblank_line(body: str) -> str:
     return ""
 
 
+def _parse_rate_line(first_line: str) -> float:
+    """Validate and parse a bare-number rate line. Raises ParseError."""
+    if not first_line:
+        raise ParseError("No rate found — the first line is empty.")
+    if not RATE_RE.match(first_line):
+        raise ParseError(
+            f"{first_line!r} is not a bare number "
+            f"(expected e.g. '100000' or '1234.56')."
+        )
+    rate = float(re.sub(r"[,$\s]", "", first_line))
+    if not (0 < rate < MAX_RATE):
+        raise ParseError(f"Rate {rate} is outside the allowed range (0, {MAX_RATE}).")
+    return rate
+
+
+def parse_rate_reply(body: str) -> float:
+    """Parse a bare-number rate off the first line of a reply body (the
+    'just the amount' follow-up to a MissingRateError prompt). Raises
+    ParseError on anything that isn't a valid rate."""
+    return _parse_rate_line(_first_nonblank_line(body))
+
+
 def parse_bid_email(raw_bytes: bytes, allowlist: list[str]) -> BidRequest:
-    """Parse and validate a forwarded alert. Raises ParseError on any problem."""
+    """Parse and validate a forwarded alert. Raises ParseError on any problem;
+    raises MissingRateError (a ParseError subclass) specifically when the
+    email is a recognized alert forward — valid sender, valid TMS ID — but
+    the rate is missing or unreadable, so the caller can ask for just the
+    amount instead of bouncing the whole thing."""
     msg = email.message_from_bytes(raw_bytes, policy=policy.default)
 
     # --- sender allowlist (checked first: reject strangers before doing anything) ---
@@ -103,25 +140,21 @@ def parse_bid_email(raw_bytes: bytes, allowlist: list[str]) -> BidRequest:
 
     body = _plain_text_body(msg)
 
-    # --- rate: first non-blank line must be a bare number ---
-    first_line = _first_nonblank_line(body)
-    if not first_line:
-        raise ParseError("Email body is empty; no rate found on the first line.")
-    if not RATE_RE.match(first_line):
-        raise ParseError(
-            f"First line {first_line!r} is not a bare number "
-            f"(expected e.g. '100000' or '1234.56')."
-        )
-    rate = float(re.sub(r"[,$\s]", "", first_line))
-    if not (0 < rate < MAX_RATE):
-        raise ParseError(f"Rate {rate} is outside the allowed range (0, {MAX_RATE}).")
-
-    # --- load / TMS ID from subject or body ---
+    # --- load / TMS ID from subject or body, checked BEFORE the rate so we
+    # can tell "this is a real e2open alert, just missing the amount" apart
+    # from junk that isn't a recognizable alert forward at all ---
     subject = msg["Subject"] or ""
     match = TMS_ID_RE.search(subject) or TMS_ID_RE.search(body)
     if not match:
         raise ParseError("Could not find 'TMS ID <number>' in the subject or body.")
     load_id = match.group(1)
+
+    # --- rate: first non-blank line must be a bare number ---
+    first_line = _first_nonblank_line(body)
+    try:
+        rate = _parse_rate_line(first_line)
+    except ParseError as e:
+        raise MissingRateError(str(e), load_id=load_id) from e
 
     return BidRequest(
         sender=sender_addr,

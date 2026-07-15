@@ -96,10 +96,49 @@ def test_forward_sends_confirmation_and_does_not_submit(ses, monkeypatch):
 
 
 def test_forward_parse_failure_emails_sender(ses, monkeypatch):
-    monkeypatch.setattr(app, "s3", FakeS3(_raw("vardan@ccsexpedited.com", "bid 500\r\n\r\nTMS ID 1\r\n")))
+    monkeypatch.setattr(app, "s3", FakeS3(_raw("vardan@ccsexpedited.com", "bid 500\r\n\r\nno load number here\r\n")))
     app.lambda_handler(_event(), None)
     assert FakeClient.last is None
     assert "FAILED" in ses.sent[0]["subject"]
+
+
+def test_forward_missing_rate_asks_for_amount(ses, monkeypatch):
+    # Valid TMS ID, but the first line isn't a bare rate -> should be
+    # recognized as a real alert and prompt for just the amount, not
+    # bounced as a generic parse failure.
+    monkeypatch.setattr(app, "s3", FakeS3(_raw("vardan@ccsexpedited.com", "bid 500\r\n\r\nTMS ID 1\r\n")))
+    app.lambda_handler(_event(), None)
+    assert FakeClient.last is None
+    msg = ses.sent[0]
+    assert "need the rate" in msg["subject"].lower()
+    assert "1" in msg["subject"]
+    assert "[bid LOAD=1]" in msg["body"]
+    assert msg["reply_to"] == ["bid@bot.carolinascourier.com"]
+
+
+def test_rate_reply_after_missing_rate_asks_for_confirmation(ses, monkeypatch):
+    body = ("100000\r\n\r\n"
+            "On Mon someone wrote:\r\n"
+            "> Reply to this email with just the rate...\r\n"
+            "> [bid LOAD=1]\r\n")
+    monkeypatch.setattr(app, "s3", FakeS3(_raw("vardan@ccsexpedited.com", body)))
+    app.lambda_handler(_event(), None)
+    assert FakeClient.last is None
+    msg = ses.sent[0]
+    assert "reply yes" in msg["subject"].lower()
+    assert "LOAD=1 RATE=100000.00" in msg["body"]
+    assert msg["reply_to"] == ["bid@bot.carolinascourier.com"]
+
+
+def test_rate_reply_still_invalid_asks_again(ses, monkeypatch):
+    body = ("not a number\r\n\r\n"
+            "> [bid LOAD=1]\r\n")
+    monkeypatch.setattr(app, "s3", FakeS3(_raw("vardan@ccsexpedited.com", body)))
+    app.lambda_handler(_event(), None)
+    assert FakeClient.last is None
+    msg = ses.sent[0]
+    assert "still need a valid rate" in msg["subject"].lower()
+    assert "[bid LOAD=1]" in msg["body"]
 
 
 # --- step 2: 'yes' reply -> submit ---

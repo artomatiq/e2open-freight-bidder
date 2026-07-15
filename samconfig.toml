@@ -18,7 +18,11 @@ confirm_changeset = true
 resolve_s3 = true
 region = "us-east-1"
 # LIVE: a confirmed 'yes' reply places a REAL bid. Set to DryRun=true to disarm.
-parameter_overrides = "DryRun=false"
+# IntakeRecipient/MailFrom are pinned explicitly because CloudFormation reuses
+# a parameter's previously-deployed value when it's omitted here, even after
+# the template's Default changes — omitting them would silently keep the
+# stack on the old bids.carolinascourier.com addresses.
+parameter_overrides = "DryRun=false IntakeRecipient=bid@bot.carolinascourier.com MailFrom=auto@bot.carolinascourier.com SharedRuleSetName=ccs-bot-rules"
 
 [default.package.parameters]
 resolve_s3 = true
