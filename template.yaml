@@ -4,14 +4,14 @@ Description: >
   e2open-freight-bidder
 
   Email intake pipeline: SES receives a forwarded bid-request email at
-  intake@bids.carolinascourier.com, stores it in S3, which triggers a Lambda
+  bid@bot.carolinascourier.com, stores it in S3, which triggers a Lambda
   that parses the rate + TMS load ID, logs into e2open, submits the bid, and
   emails the result back to the sender.
 
 Parameters:
   IntakeRecipient:
     Type: String
-    Default: intake@bids.carolinascourier.com
+    Default: bid@bot.carolinascourier.com
     Description: The address SES matches incoming mail against.
   Allowlist:
     Type: String
@@ -19,8 +19,18 @@ Parameters:
     Description: Comma-separated sender addresses allowed to trigger a bid.
   MailFrom:
     Type: String
-    Default: bidder@bids.carolinascourier.com
+    Default: auto@bot.carolinascourier.com
     Description: SES sender for confirmation emails (must be on the verified domain).
+  SharedRuleSetName:
+    Type: String
+    Default: fourkites-dispatch-rules
+    Description: >
+      The SES active receipt rule set. Shared with other apps on this domain
+      (e.g. the fourkites dispatcher) and owned outside this stack — created
+      and activated manually, not by CloudFormation. This stack only adds its
+      own rule to it; it must never create or activate a rule set of its own,
+      since SES runs exactly one active rule set per account/region and doing
+      so would deactivate this one and take the other apps offline.
   DryRun:
     Type: String
     Default: "true"
@@ -140,7 +150,7 @@ Resources:
               StringEquals:
                 aws:SourceAccount: !Ref AWS::AccountId
               ArnLike:
-                aws:SourceArn: !Sub "arn:aws:ses:${AWS::Region}:${AWS::AccountId}:receipt-rule-set/bids-ruleset:receipt-rule/*"
+                aws:SourceArn: !Sub "arn:aws:ses:${AWS::Region}:${AWS::AccountId}:receipt-rule-set/${SharedRuleSetName}:receipt-rule/*"
           # Reject any non-HTTPS access to the bucket.
           - Sid: DenyInsecureTransport
             Effect: Deny
@@ -153,22 +163,16 @@ Resources:
               Bool:
                 aws:SecureTransport: false
 
-  # The container for receipt rules. NOTE: creating this does NOT make it the
-  # active rule set — SES only runs the ONE active set. Activation is not a
-  # CloudFormation property; see the post-deploy command in the README/outputs.
-  EmailRuleSet:
-    Type: AWS::SES::ReceiptRuleSet
-    Properties:
-      RuleSetName: bids-ruleset
-
-  # "For mail to the intake address, store it in the bucket."
+  # "For mail to the intake address, store it in the bucket." Added into the
+  # SharedRuleSetName rule set, which this stack does not own or create — see
+  # the parameter description. Deleting this stack removes only this rule.
   EmailRule:
     Type: AWS::SES::ReceiptRule
     # Bucket policy must exist first, or SES rejects the S3 action for lack of
     # write permission at creation time.
     DependsOn: EmailBucketPolicy
     Properties:
-      RuleSetName: !Ref EmailRuleSet
+      RuleSetName: !Ref SharedRuleSetName
       Rule:
         Name: bids-intake
         Enabled: true
@@ -188,8 +192,3 @@ Outputs:
   BidderFunctionName:
     Description: The bidder Lambda function name
     Value: !Ref BidderFunction
-  ActivateRuleSetCommand:
-    Description: >
-      Run this ONCE after deploy to make the rule set active (CloudFormation
-      cannot do this itself). Without it, SES ignores the rule.
-    Value: !Sub "aws ses set-active-receipt-rule-set --rule-set-name bids-ruleset --region ${AWS::Region}"

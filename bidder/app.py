@@ -39,8 +39,8 @@ ses = boto3.client("ses")
 
 ALLOWLIST = [a.strip().lower() for a in os.environ.get("ALLOWLIST", "vardan@ccsexpedited.com").split(",") if a.strip()]
 SECRET_ID = os.environ.get("SECRET_ID", "e2open/credentials")
-MAIL_FROM = os.environ.get("MAIL_FROM", "bidder@bids.carolinascourier.com")
-REPLY_TO = os.environ.get("REPLY_TO", "intake@bids.carolinascourier.com")
+MAIL_FROM = os.environ.get("MAIL_FROM", "auto@bot.carolinascourier.com")
+REPLY_TO = os.environ.get("REPLY_TO", "bid@bot.carolinascourier.com")
 DRY_RUN = os.environ.get("DRY_RUN", "true").strip().lower() == "true"
 BID_COMMENT = os.environ.get("BID_COMMENT", "")
 OFFER_TTL_HOURS = int(os.environ.get("OFFER_TTL_HOURS", "24"))

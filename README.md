@@ -11,7 +11,7 @@ confirmation step in between.
 ```
  Spot-market alert email  ─►  human reads it, decides to bid
                                         │
-                 forwards to intake@bids.carolinascourier.com
+                 forwards to bid@bot.carolinascourier.com
                  with the bid amount as a bare number on line 1
                                         │
                                         ▼
@@ -21,7 +21,7 @@ confirmation step in between.
                     Lambda replies: "Reply 'yes' to submit
                     $X for TMS ID <load>"   ── nothing submitted yet
                                         │
-                    human replies "yes"  (routes back to intake@)
+                    human replies "yes"  (routes back to bid@)
                                         │
                                         ▼
    Lambda ─►  e2open: login ─► scrape offer form ─► submit bid
@@ -39,12 +39,12 @@ review first. Reply "no" to cancel.
 
 | Resource | Role |
 |---|---|
-| SES receipt rule (`bids-ruleset`) | Receives mail for `intake@bids.carolinascourier.com`, stores it in S3 |
+| SES receipt rule (`bids-intake`) | Added to the shared `fourkites-dispatch-rules` active rule set (owned externally, not by this stack); receives mail for `bid@bot.carolinascourier.com`, stores it in S3 |
 | S3 bucket (`e2open-freight-bids-intake-<acct>`) | Holds the raw MIME email; `ObjectCreated` triggers the Lambda |
 | Lambda (`BidderFunction`) | Parse → e2open login/scrape/submit → email back |
 | Secrets Manager (`e2open/credentials`) | e2open portal login (`userID` + `password` JSON) — populated out-of-band |
 
-The SES **domain identity** (`bids.carolinascourier.com`) and its DNS records
+The SES **domain identity** (`bot.carolinascourier.com`) and its DNS records
 (MX + DKIM) are configured manually at the DNS host, since CloudFormation can't
 manage third-party DNS. See [CLAUDE.md](CLAUDE.md) for the reverse-engineered
 e2open request flow.
@@ -67,9 +67,6 @@ CLAUDE.md      Reverse-engineered e2open portal flow + open items
 sam build
 sam deploy                    # region + params come from samconfig.toml
 
-# One-time after first deploy — CloudFormation can't activate a rule set:
-aws ses set-active-receipt-rule-set --rule-set-name bids-ruleset --region us-east-1
-
 # Populate the secret (run in your own shell; value never goes in git):
 aws secretsmanager put-secret-value --secret-id e2open/credentials --region us-east-1 \
   --secret-string '{"userID":"<user>","password":"<pass>"}'
@@ -79,9 +76,10 @@ aws secretsmanager put-secret-value --secret-id e2open/credentials --region us-e
 
 | Parameter | Default | Notes |
 |---|---|---|
-| `IntakeRecipient` | `intake@bids.carolinascourier.com` | Address SES matches; also the reply-to for confirmations |
+| `IntakeRecipient` | `bid@bot.carolinascourier.com` | Address SES matches; also the reply-to for confirmations |
 | `Allowlist` | `vardan@ccsexpedited.com` | Comma-separated senders allowed to trigger a bid |
-| `MailFrom` | `bidder@bids.carolinascourier.com` | Confirmation sender (must be on the verified domain) |
+| `MailFrom` | `auto@bot.carolinascourier.com` | Confirmation sender (must be on the verified domain) |
+| `SharedRuleSetName` | `fourkites-dispatch-rules` | The SES active receipt rule set this stack adds its rule to — shared with other apps on this domain, created/activated outside this stack |
 | `DryRun` | `"true"` (template) / `"false"` (samconfig) | When `true`, scrapes + builds payload but does **not** submit |
 
 **Safety notes**
@@ -89,6 +87,11 @@ aws secretsmanager put-secret-value --secret-id e2open/credentials --region us-e
   and redeploy to disarm.
 - SES starts in **sandbox mode** — confirmation emails only reach *verified*
   recipients until you request production access.
+- SES runs exactly **one active rule set per account/region**, shared across every
+  app on this domain (currently `fourkites-dispatch-rules`, owned by the
+  dispatcher app). This stack must never create or activate a rule set of its
+  own — doing so would deactivate the shared one and take other apps' mail
+  offline. It only adds its own rule (`bids-intake`) to the existing set.
 
 ## Tests
 

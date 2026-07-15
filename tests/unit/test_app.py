@@ -92,7 +92,7 @@ def test_forward_sends_confirmation_and_does_not_submit(ses, monkeypatch):
     assert "208803999" in msg["subject"]
     assert "$100,000.00" in msg["body"]
     assert "LOAD=208803999 RATE=100000.00" in msg["body"]   # token present
-    assert msg["reply_to"] == ["intake@bids.carolinascourier.com"]
+    assert msg["reply_to"] == ["bid@bot.carolinascourier.com"]
 
 
 def test_forward_parse_failure_emails_sender(ses, monkeypatch):

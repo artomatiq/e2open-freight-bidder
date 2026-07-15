@@ -15,7 +15,7 @@ def _make_email(from_addr: str, subject: str, body: str) -> bytes:
     """Build a minimal plain-text email for the negative/edge tests."""
     msg = EmailMessage()
     msg["From"] = from_addr
-    msg["To"] = "intake@bids.carolinascourier.com"
+    msg["To"] = "bid@bot.carolinascourier.com"
     msg["Subject"] = subject
     msg.set_content(body)
     return msg.as_bytes()
