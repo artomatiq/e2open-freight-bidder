@@ -168,6 +168,25 @@ def test_yes_reply_submits_for_real(ses, monkeypatch):
     assert "SUBMITTED" in ses.sent[0]["subject"]
 
 
+def test_yes_reply_load_not_available_gets_clear_reply(ses, monkeypatch):
+    from bidder.e2open import LoadNotAvailableError
+
+    class NotAvailableClient(FakeClient):
+        def fetch_offer_form(self, load_id):
+            raise LoadNotAvailableError(load_id)
+
+    monkeypatch.setattr(app, "E2openClient", NotAvailableClient)
+    monkeypatch.setattr(app, "s3", FakeS3(_raw("vardan@ccsexpedited.com", YES_REPLY)))
+    app.lambda_handler(_event(), None)
+
+    assert FakeClient.last.submit_args is None      # never got to submit
+    msg = ses.sent[0]
+    assert msg["subject"] == "Freight bid — load 208803999 not found"
+    assert msg["body"].startswith("Load not found.\n\n")
+    assert "TMS ID: 208803999" in msg["body"]
+    assert "$100,000.00" in msg["body"]
+
+
 def test_yes_reply_without_token_does_not_submit(ses, monkeypatch):
     monkeypatch.setattr(app, "s3", FakeS3(_raw("vardan@ccsexpedited.com", "yes please\r\n")))
     app.lambda_handler(_event(), None)

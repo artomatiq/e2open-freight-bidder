@@ -1,7 +1,7 @@
 """Unit tests for bidder.e2open — scraping/derivation logic, no network."""
 import pytest
 
-from bidder.e2open import BASE_URL, E2openClient, E2openError, OfferForm
+from bidder.e2open import BASE_URL, E2openClient, E2openError, LoadNotAvailableError, OfferForm
 
 LID = "208803999"
 
@@ -86,9 +86,20 @@ def test_scrape_multi_combo_picks_nonempty_equipment():
     assert form.equipment == "3005"
 
 
-def test_scrape_missing_static_field_raises():
+def test_missing_companyID_means_load_not_available():
+    # No companyID = the load left the spot market; e2open serves the page
+    # without the offer's hidden fields. Should be the clear, dedicated error.
     broken = SINGLE_COMBO_HTML.replace(_hidden(f"companyID{LID}", "COMP1"), "")
-    with pytest.raises(E2openError, match="companyID"):
+    with pytest.raises(LoadNotAvailableError) as exc:
+        _client(broken).fetch_offer_form(LID)
+    assert exc.value.load_id == LID
+
+
+def test_scrape_missing_other_static_field_still_raises_generic():
+    # A different missing field (with companyID present) is an unexpected form
+    # shape, not a taken load — keep the generic diagnostic.
+    broken = SINGLE_COMBO_HTML.replace(_hidden(f"rateCurr{LID}", "USD"), "")
+    with pytest.raises(E2openError, match="rateCurr"):
         _client(broken).fetch_offer_form(LID)
 
 

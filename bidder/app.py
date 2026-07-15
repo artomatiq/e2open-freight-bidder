@@ -27,7 +27,7 @@ from datetime import datetime, timedelta
 
 import boto3
 
-from bidder.e2open import E2openClient, E2openError
+from bidder.e2open import E2openClient, E2openError, LoadNotAvailableError
 from bidder.parser import (
     MissingRateError,
     ParseError,
@@ -178,6 +178,15 @@ def _handle_confirmation(sender: str, body: str) -> None:
             expdate=exp.strftime("%m/%d/%Y"), exptime=exp.strftime("%H:%M"),
             comments=BID_COMMENT, dry_run=DRY_RUN,
         )
+    except LoadNotAvailableError:
+        log.info("Load %s no longer on the spot market; nothing submitted", load_id)
+        _reply(sender, f"Freight bid — load {load_id} not found",
+               "Load not found.\n\n"
+               "This load is no longer on the spot market — it was likely taken by "
+               "another carrier, or the bid window closed. Nothing was submitted.\n\n"
+               f"TMS ID: {load_id}\n"
+               f"Bid:    ${rate:,.2f}\n")
+        return
     except E2openError as e:
         log.error("e2open error on load %s: %s", load_id, e)
         _reply(sender, f"Freight bid FAILED — load {load_id}",

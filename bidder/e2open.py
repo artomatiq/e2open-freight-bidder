@@ -44,6 +44,18 @@ class E2openError(Exception):
     """Any failure talking to the e2open portal (login, scrape, or submit)."""
 
 
+class LoadNotAvailableError(E2openError):
+    """The load is no longer biddable. When a load leaves the spot market —
+    someone else took it, or the 30-minute bid window closed — e2open still
+    returns MakeAnOffer.jsp but strips out the offer's hidden fields. This is
+    an expected outcome, not a bug, so it gets its own type; the handler
+    formats the human-facing 'Load not found.' reply."""
+
+    def __init__(self, load_id: str):
+        self.load_id = load_id
+        super().__init__(f"Load {load_id} is no longer available on the spot market.")
+
+
 @dataclass
 class OfferForm:
     """Everything scraped from MakeAnOffer.jsp needed to build a bid submission."""
@@ -156,6 +168,13 @@ class E2openClient:
         parser = _HiddenInputParser()
         parser.feed(html)
         hidden = parser.hidden
+
+        # When a load leaves the spot market (taken by another carrier, or the
+        # bid window closed) e2open still serves MakeAnOffer.jsp but strips the
+        # offer's hidden fields. companyID is the reliable sentinel: no
+        # companyID means there's no biddable offer on the page.
+        if f"companyID{load_id}" not in hidden:
+            raise LoadNotAvailableError(load_id)
 
         fields: dict[str, str] = {}
         for base in STATIC_FIELDS:
