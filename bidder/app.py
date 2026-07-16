@@ -46,7 +46,13 @@ ses = boto3.client("ses")
 
 ALLOWLIST = [a.strip().lower() for a in os.environ.get("ALLOWLIST", "vardan@ccsexpedited.com").split(",") if a.strip()]
 SECRET_ID = os.environ.get("SECRET_ID", "e2open/credentials")
-MAIL_FROM = os.environ.get("MAIL_FROM", "auto@bot.carolinascourier.com")
+# From header for confirmation emails. Address and display name are kept SEPARATE
+# because SAM CLI's parameter_overrides splits values on spaces — so a
+# "Display Name <addr>" can't travel through the MailFrom parameter. The address
+# comes from the param (env MAIL_FROM); the name is a plain literal env var.
+_MAIL_FROM_ADDR = os.environ.get("MAIL_FROM", "auto@bot.carolinascourier.com")
+_MAIL_FROM_NAME = os.environ.get("MAIL_FROM_NAME", "CCS Bot")
+MAIL_FROM = f"{_MAIL_FROM_NAME} <{_MAIL_FROM_ADDR}>" if _MAIL_FROM_NAME else _MAIL_FROM_ADDR
 REPLY_TO = os.environ.get("REPLY_TO", "bid@bot.carolinascourier.com")
 DRY_RUN = os.environ.get("DRY_RUN", "true").strip().lower() == "true"
 BID_COMMENT = os.environ.get("BID_COMMENT", "")

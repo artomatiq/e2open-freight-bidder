@@ -20,7 +20,10 @@ Parameters:
   MailFrom:
     Type: String
     Default: auto@bot.carolinascourier.com
-    Description: SES sender for confirmation emails (must be on the verified domain).
+    Description: >
+      SES sender ADDRESS for confirmation emails (must be on the verified domain).
+      Bare address only — no display name here, because SAM parameter_overrides
+      splits on spaces. The friendly name is the MAIL_FROM_NAME env var below.
   SharedRuleSetName:
     Type: String
     Default: fourkites-dispatch-rules
@@ -66,6 +69,7 @@ Resources:
           ALLOWLIST: !Ref Allowlist
           SECRET_ID: e2open/credentials
           MAIL_FROM: !Ref MailFrom
+          MAIL_FROM_NAME: "CCS Bot"         # display name; literal here (a space can't go through a CFN param override)
           REPLY_TO: !Ref IntakeRecipient    # 'yes' replies route back into the intake pipeline
           DRY_RUN: !Ref DryRun
           OFFER_TTL_HOURS: "24"
