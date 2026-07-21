@@ -103,10 +103,12 @@ def test_scrape_missing_other_static_field_still_raises_generic():
         _client(broken).fetch_offer_form(LID)
 
 
-def test_multi_combo_with_two_nonempty_is_ambiguous():
+def test_multi_combo_with_two_nonempty_submits_blank():
     html = MULTI_COMBO_HTML.replace('"IM":[]', '"IM":[[9,"X"]]')
-    with pytest.raises(E2openError, match="disambiguation"):
-        _client(html).fetch_offer_form(LID)
+    form = _client(html).fetch_offer_form(LID)
+    assert form.trans_mode == ""
+    assert form.service_level == ""
+    assert form.equipment == ""
 
 
 # --- payload construction ---

@@ -69,7 +69,7 @@ Parse the HTML response for:
     var newServiceLevel = [{"2458":"IM","2464":"TL"}];
     var newServiceEquipment= [{"IM":[],"TL":[[3005,"53 DRY VAN"]]}];
     ```
-    Regex these two arrays out of the raw HTML (valid JSON once you strip `var x = ... ;`), then pick the service level whose equipment array is non-empty. `transMode` = the string value in `newServiceLevel` for that key; `equipment` = the numeric code from the equipment array. (No case with multiple non-empty options has been seen yet — needs a disambiguation rule if it comes up.)
+    Regex these two arrays out of the raw HTML (valid JSON once you strip `var x = ... ;`), then pick the service level whose equipment array is non-empty. `transMode` = the string value in `newServiceLevel` for that key; `equipment` = the numeric code from the equipment array. If more than one service level has non-empty equipment, submit `transMode`/`serviceLevel`/`equipment` blank — confirmed live (load 209144936, 2026-07-21) that the rendered `<select>`s have no default option and only populate on user interaction, so an untouched form submits blank and e2open accepts it as a valid offer.
 
 **C. Fields the automation supplies itself** (not present in the response): `rate{loadID}` (the bid), `expdate{loadID}` (MM/DD/YYYY), `exptime{loadID}` (HH:MM 24hr), `group{loadID}` (optional, blank ok), `comments{loadID}` (optional).
 
@@ -119,4 +119,4 @@ Parse for `class="rowstatussuccess"` → success; otherwise extract the `rowstat
 2. Build the pipeline: SES intake inbox (separate from the original alert inbox) → Lambda → parser (TMS ID + rate extraction, sender allowlist) → e2open client (login → scrape → submit) → confirmation email back.
 3. Credentials in AWS Secrets Manager, never plaintext/env vars. (Note: the original e2open password was exposed during discovery/debugging and should already have been rotated — use the new one only via Secrets Manager going forward.)
 4. Session lifetime not yet measured — determines whether Lambda re-authenticates per bid or holds a session across a shift.
-5. No disambiguation rule yet for loads with multiple valid service-level/equipment combos (not encountered in testing so far).
+5. ~~No disambiguation rule yet for loads with multiple valid service-level/equipment combos~~ — **RESOLVED (2026-07-21).** Submit blank; see Step 2B.

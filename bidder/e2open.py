@@ -231,11 +231,8 @@ class E2openClient:
         if len(non_empty) == 0:
             raise E2openError(f"Load {load_id}: no service level has available equipment.")
         if len(non_empty) > 1:
-            # CLAUDE.md open item #5: no disambiguation rule defined yet. Fail loudly.
-            raise E2openError(
-                f"Load {load_id}: multiple service levels have equipment "
-                f"({sorted(non_empty)}); no disambiguation rule defined."
-            )
+            # Untouched selects submit blank and e2open accepts it (confirmed live).
+            return "", "", ""
         trans_mode, equip_list = next(iter(non_empty.items()))
         equipment = str(equip_list[0][0])  # numeric code
         # Reverse-lookup the serviceLevel ID for this transMode.
